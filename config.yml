@@ -1,0 +1,26 @@
+---
+skel: data/enemy_1184_cadkgt_3.skel.prefab
+atlas: data/enemy_1184_cadkgt_3.atlas.prefab
+actions:
+  - trigger: Space
+    sequence:
+      - name: Attack
+  - trigger: X
+    sequence:
+      - name: Skill_Begin
+      - name: Skill_Loop
+        loop: true
+        length: 5.0
+      - name: Skill_End
+  - trigger: Z
+    sequence:
+      - name: Die
+    return_to_idle: false
+idle_animation: Idle
+window_size:
+  - 482.4
+  - 351.2
+window_position:
+  - 1000.0
+  - 424.0
+scale: 1.0

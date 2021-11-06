@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "spine-sys",
+    "spine",
+    "spine-widget"
+]
+
+[profile.release]
+debug = true
