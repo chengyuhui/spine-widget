@@ -18,9 +18,9 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 482.4
-  - 351.2
+  - 413.6
+  - 249.6
 window_position:
-  - 1000.0
-  - 424.0
-scale: 1.0
+  - 1256.8
+  - 616.0
+scale: 0.5999999

@@ -30,9 +30,11 @@ fn main(
     out.tex_coords = model.tex_coords;
     out.tint = model.tint;
 
+    // Scale from pixel to NDC
     var x: f32 = 2.0 * (model.position.x + 0.5) / scaling.window_width;
     var y: f32 = 2.0 * (model.position.y + 0.5) / scaling.window_height - 0.5;
 
+    // Apply user scaling
     out.clip_position = vec4<f32>(x * scaling.scale, y * scaling.scale, 0.0, 1.0);
     return out;
 }

@@ -13,10 +13,18 @@ use spine::{
 };
 use texture::{Texture, TextureConfig};
 use wgpu::{util::DeviceExt, IndexFormat};
+use windows::Win32::{
+    Foundation::HWND,
+    UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE,
+        WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    },
+};
 use winit::{
     dpi::{LogicalPosition, LogicalSize},
     event::*,
     event_loop::{ControlFlow, EventLoop},
+    platform::windows::WindowExtWindows,
     window::{Window, WindowBuilder},
 };
 
@@ -130,6 +138,7 @@ struct State {
 
     pressed_keys: HashSet<VirtualKeyCode>,
     modifiers_state: ModifiersState,
+    passthrough: bool,
 }
 
 impl State {
@@ -328,6 +337,7 @@ impl State {
 
             pressed_keys: HashSet::new(),
             modifiers_state: Default::default(),
+            passthrough: true,
         }
     }
 
@@ -373,6 +383,14 @@ impl State {
                     (ModifiersState::CTRL, VirtualKeyCode::Minus) => {
                         // "-_" on main keyboard
                         self.scaling_uniform.scale -= 0.1;
+                        return true;
+                    }
+                    (_, VirtualKeyCode::F12) => {
+                        // "F12" on main keyboard
+                        self.passthrough = !self.passthrough;
+                        dbg!(self.passthrough);
+                        window.set_decorations(!self.passthrough);
+                        set_click_passthrough(&window, self.passthrough);
                         return true;
                     }
                     _ => {}
@@ -686,6 +704,27 @@ impl SpineState {
     }
 }
 
+/// Make this window clickable or not (clicking passthrough)
+fn set_click_passthrough(window: &Window, passthrough: bool) {
+    unsafe {
+        let hwnd: HWND = std::mem::transmute(window.hwnd());
+        let window_styles: WINDOW_EX_STYLE = match GetWindowLongPtrW(hwnd, GWL_EXSTYLE) {
+            0 => panic!("GetWindowLongPtrW failed"),
+            n => WINDOW_EX_STYLE(n.try_into().unwrap()),
+        };
+
+        let window_styles = if passthrough {
+            window_styles | WS_EX_TRANSPARENT | WS_EX_LAYERED
+        } else {
+            window_styles & !WS_EX_TRANSPARENT | WS_EX_LAYERED
+        };
+
+        if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, window_styles.0.try_into().unwrap()) == 0 {
+            panic!("SetWindowLongPtrW failed");
+        }
+    }
+}
+
 fn main() {
     env_logger::init();
 
@@ -697,7 +736,7 @@ fn main() {
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        // .with_decorations(false)
+        .with_decorations(false)
         .with_transparent(true)
         .with_inner_size(LogicalSize::new(config.window_size.0, config.window_size.1))
         .build(&event_loop)
@@ -709,6 +748,7 @@ fn main() {
     ));
     window.set_title("spine-widget");
     window.set_always_on_top(true);
+    set_click_passthrough(&window, true);
 
     let mut state = pollster::block_on(State::new(&window, &config));
 
