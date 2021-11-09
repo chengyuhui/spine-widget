@@ -1,10 +1,6 @@
 use std::{ffi::CStr, marker::PhantomData, slice};
 
-use spine_sys::{
-    spAttachment, spAttachmentType_SP_ATTACHMENT_MESH, spAttachmentType_SP_ATTACHMENT_REGION,
-    spMeshAttachment, spMeshAttachment_computeWorldVertices, spRegionAttachment,
-    spRegionAttachment_computeWorldVertices,
-};
+use spine_sys::{spAttachment, spAttachmentType_SP_ATTACHMENT_MESH, spAttachmentType_SP_ATTACHMENT_PATH, spAttachmentType_SP_ATTACHMENT_REGION, spMeshAttachment, spMeshAttachment_computeWorldVertices, spRegionAttachment, spRegionAttachment_computeWorldVertices};
 
 use crate::{atlas::AtlasRegion, Slot};
 
@@ -14,7 +10,7 @@ pub enum AttachmentType<'s, 'tex> {
     // BoundingBox(BoundingBoxAttachment),
     Mesh(MeshAttachment<'s, 'tex>),
     // LinkedMesh(LinkedMeshAttachment),
-    // Path(PathAttachment),
+    Path(PathAttachment),
 }
 
 #[derive(Debug)]
@@ -47,7 +43,8 @@ impl<'s, 'tex> Attachment<'s, 'tex> {
                     slot: self.slot,
                     _tex: PhantomData,
                 }),
-                _ => unimplemented!(),
+                spAttachmentType_SP_ATTACHMENT_PATH => AttachmentType::Path(PathAttachment),
+                _ => unimplemented!("Unimplemented attachment type: {}", (*self.ptr).type_),
             }
         }
     }
@@ -174,3 +171,6 @@ impl<'a, 'tex> MeshAttachment<'a, 'tex> {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct PathAttachment;

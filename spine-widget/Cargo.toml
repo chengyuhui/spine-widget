@@ -15,15 +15,18 @@ spine = { path = "../spine" }
 bytemuck = { version = "1.4", features = ["derive"] }
 cgmath = "0.18"
 pollster = "0.2"
-image = "0.23"
+image = { version = "0.23", default-features = false, features = ["png"] }
 wgpu = "0.11"
 winit = { version = "0.25", features = ["serde"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 
+zip = "0.5"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.24", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# trayicon = { version = "0.1.1", features = ["winit"] }

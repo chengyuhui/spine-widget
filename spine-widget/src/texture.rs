@@ -5,6 +5,8 @@ use image::{DynamicImage, GenericImageView};
 use spine::atlas::{AtlasFilter, AtlasWrap};
 use wgpu::util::DeviceExt;
 
+use crate::display::Display;
+
 static TEX_ID: AtomicU32 = AtomicU32::new(0);
 
 pub struct TextureConfig {
@@ -40,8 +42,7 @@ impl Texture {
 
     pub fn initialize(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        display: &Display,
         layout: &wgpu::BindGroupLayout,
         label: Option<&str>,
     ) -> Result<()> {
@@ -50,8 +51,14 @@ impl Texture {
             TextureState::Initialized(_) => return Ok(()),
         };
 
-        let texture =
-            InitializedTexture::from_image(device, queue, layout, image, &self.config, label)?;
+        let texture = InitializedTexture::from_image(
+            &display.device,
+            &display.queue,
+            layout,
+            image,
+            &self.config,
+            label,
+        )?;
 
         self.state = TextureState::Initialized(texture);
 

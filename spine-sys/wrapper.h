@@ -1,10 +1,15 @@
 #include <spine/spine.h>
-// #include <spine/extension.h>
 
-// void _spAtlasPage_createTexture(spAtlasPage *self, const char *path);
+/*
+ * Internal API available for extension:
+ */
 
-// void _spAtlasPage_disposeTexture(spAtlasPage *self);
+void* _malloc (size_t size, const char* file, int line);
+void* _calloc (size_t num, size_t size, const char* file, int line);
+void _free (void* ptr);
 
-// char *_spUtil_readFile(const char *path, int *length);
+void _setMalloc (void* (*_malloc) (size_t size));
+void _setDebugMalloc (void* (*_malloc) (size_t size, const char* file, int line));
+void _setFree (void (*_free) (void* ptr));
 
-char *_readFile(const char *path, int *length);
+char* _readFile (const char* path, int* length);

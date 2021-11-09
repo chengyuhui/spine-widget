@@ -1,25 +1,15 @@
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+// #![cfg_attr(
+//     all(target_os = "windows", not(debug_assertions)),
+//     windows_subsystem = "windows"
+// )]
+
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::Result;
-use config::Config;
-use image::{io::Reader as ImageReader, GenericImageView};
-use spine::{
-    atlas::AtlasPage, spine_init, AnimationState, AnimationStateData, Atlas, AttachmentType,
-    Skeleton, SkeletonData, SpineCallbacks,
-};
+use image::GenericImageView;
+use spine::{atlas::AtlasPage, spine_init, AttachmentType, SpineCallbacks};
 use texture::{Texture, TextureConfig};
-use wgpu::{util::DeviceExt, IndexFormat};
-use windows::Win32::{
-    Foundation::HWND,
-    UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE,
-        WS_EX_LAYERED, WS_EX_TRANSPARENT,
-    },
-};
+use wgpu::IndexFormat;
 use winit::{
     dpi::{LogicalPosition, LogicalSize},
     event::*,
@@ -29,20 +19,36 @@ use winit::{
 };
 
 mod config;
+mod display;
+mod scaling;
+mod spine_state;
 mod texture;
+mod utils;
+mod vertex;
+
+use config::Config;
+use display::Display;
+use scaling::ScalingState;
+use spine_state::SpineState;
+use utils::*;
+use vertex::Vertex;
 
 struct SpineCb;
 impl SpineCallbacks for SpineCb {
     type Texture = Texture;
 
-    type LoadError = anyhow::Error;
+    type LoadTextureError = anyhow::Error;
+    type LoadFileError = anyhow::Error;
 
-    fn load_texture(path: &str, atlas: &AtlasPage) -> Result<(Texture, u32, u32), Self::LoadError> {
-        let mut img = ImageReader::open(path)?.decode()?;
+    fn load_texture(
+        path: &str,
+        atlas: &AtlasPage,
+    ) -> Result<(Texture, u32, u32), Self::LoadTextureError> {
+        let mut img = image::load_from_memory(&load_file_packed(path)?)?;
 
         let mask_path = PathBuf::from(path.replace(".png", "[alpha].png").as_str());
-        if mask_path.is_file() {
-            let mask_img = ImageReader::open(&mask_path)?.decode()?;
+        if let Ok(mask_buf) = load_file_packed(mask_path.to_str().unwrap()) {
+            let mask_img = image::load_from_memory(&mask_buf)?;
 
             let base = img.as_mut_rgba8().unwrap();
             let mask = mask_img.as_rgba8().unwrap();
@@ -51,6 +57,7 @@ impl SpineCallbacks for SpineCb {
                 b[3] = m[0];
             }
         }
+
         let width = img.width();
         let height = img.height();
 
@@ -68,58 +75,15 @@ impl SpineCallbacks for SpineCb {
             height,
         ))
     }
+
+    fn load_file(path: &str) -> Result<Vec<u8>, Self::LoadFileError> {
+        Ok(load_file_packed(path)?)
+    }
 }
 spine_init!(SpineCb);
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
-struct Vertex {
-    position: [f32; 2],
-    tex_coords: [f32; 2],
-    tint: [f32; 4],
-}
-
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: (mem::size_of::<[f32; 2]>() + mem::size_of::<[f32; 2]>())
-                        as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-            ],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ScalingUniform {
-    window_width: f32,
-    window_height: f32,
-    scale: f32,
-}
-
 struct State {
-    surface: wgpu::Surface,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
+    display: Display,
     size: winit::dpi::PhysicalSize<u32>,
     scale_factor: f64,
     render_pipeline: wgpu::RenderPipeline,
@@ -127,9 +91,7 @@ struct State {
     index_buffer: wgpu::Buffer,
     texture_bind_group_layout: wgpu::BindGroupLayout,
 
-    scaling_uniform: ScalingUniform,
-    scaling_buffer: wgpu::Buffer,
-    scaling_bind_group: wgpu::BindGroup,
+    scaling_state: ScalingState,
 
     spine: SpineState,
     world_vertices: Vec<[f32; 2]>,
@@ -146,39 +108,8 @@ impl State {
     async fn new(window: &Window, config: &config::Config) -> Self {
         let size = window.inner_size();
 
-        // The instance is a handle to our GPU
-        // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(window) };
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_preferred_format(&adapter).unwrap(),
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-        };
-        surface.configure(&device, &surface_config);
+        let display = Display::new(window).await;
+        let device = &display.device;
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -215,44 +146,7 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let scaling_uniform = {
-            let window_logical_size = size.to_logical::<f32>(window.scale_factor());
-            ScalingUniform {
-                window_width: window_logical_size.width,
-                window_height: window_logical_size.height,
-                scale: config.scale,
-            }
-        };
-
-        let scaling_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Scaling Buffer"),
-            contents: bytemuck::cast_slice(&[scaling_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let scaling_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("scaling_bind_group_layout"),
-            });
-
-        let scaling_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &scaling_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scaling_buffer.as_entire_binding(),
-            }],
-            label: Some("scaling_bind_group"),
-        });
+        let (scaling_state, scaling_bind_group_layout) = ScalingState::new(window, device, config);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -273,7 +167,7 @@ impl State {
                 module: &shader,
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
-                    format: surface_config.format,
+                    format: display.config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 }],
@@ -301,24 +195,21 @@ impl State {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            size: 1024 * 128, // 1M
+            size: 1024 * 128,
             mapped_at_creation: false,
         });
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Index Buffer"),
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            size: 1024 * 128, // 1M
+            size: 1024 * 128,
             mapped_at_creation: false,
         });
 
         let spine = SpineState::new(config).unwrap();
 
         Self {
-            surface,
-            device,
-            queue,
-            config: surface_config,
+            display,
             size,
             scale_factor: window.scale_factor(),
             render_pipeline,
@@ -326,9 +217,7 @@ impl State {
             index_buffer,
             texture_bind_group_layout,
 
-            scaling_uniform,
-            scaling_buffer,
-            scaling_bind_group,
+            scaling_state,
 
             spine,
             world_vertices: Vec::new(),
@@ -344,18 +233,17 @@ impl State {
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
 
-            let window_logical_size = new_size.to_logical::<f32>(self.scale_factor);
-            self.scaling_uniform.window_height = window_logical_size.height;
-            self.scaling_uniform.window_width = window_logical_size.width;
+            self.display.resize(new_size.width, new_size.height);
+
+            self.scaling_state.resize(new_size, self.scale_factor);
         }
     }
 
     fn scale(&mut self, scale_factor: f64) {
         self.scale_factor = scale_factor;
+
+        self.scaling_state.resize(self.size, scale_factor);
     }
 
     fn input(&mut self, event: &WindowEvent, window: &Window, config: &Config) -> bool {
@@ -377,12 +265,12 @@ impl State {
                 match (self.modifiers_state, keycode) {
                     (ModifiersState::CTRL, VirtualKeyCode::Equals) => {
                         // "=+" on main keyboard
-                        self.scaling_uniform.scale += 0.1;
+                        *self.scaling_state.model_scaling_mut() += 0.1;
                         return true;
                     }
                     (ModifiersState::CTRL, VirtualKeyCode::Minus) => {
                         // "-_" on main keyboard
-                        self.scaling_uniform.scale -= 0.1;
+                        *self.scaling_state.model_scaling_mut() -= 0.1;
                         return true;
                     }
                     (_, VirtualKeyCode::F12) => {
@@ -390,7 +278,7 @@ impl State {
                         self.passthrough = !self.passthrough;
                         dbg!(self.passthrough);
                         window.set_decorations(!self.passthrough);
-                        set_click_passthrough(&window, self.passthrough);
+                        set_click_passthrough(window, self.passthrough);
                         return true;
                     }
                     _ => {}
@@ -455,26 +343,25 @@ impl State {
     }
 
     fn update(&mut self) {
-        self.queue.write_buffer(
-            &self.scaling_buffer,
-            0,
-            bytemuck::cast_slice(&[self.scaling_uniform]),
-        );
+        self.scaling_state.write_to_gpu(&self.display.queue);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.spine.prepare_render();
 
-        let output = self.surface.get_current_texture()?;
+        let queue = &self.display.queue;
+
+        let output = self.display.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+        let mut encoder =
+            self.display
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -525,13 +412,8 @@ impl State {
 
                     if current_tex_id == -1 {
                         // Initialize texture
-                        tex.initialize(
-                            &self.device,
-                            &self.queue,
-                            &self.texture_bind_group_layout,
-                            None,
-                        )
-                        .unwrap();
+                        tex.initialize(&self.display, &self.texture_bind_group_layout, None)
+                            .unwrap();
                         current_tex_id = tex.id() as i64;
 
                         render_pass.set_bind_group(0, &tex.get_texture().bind_group, &[]);
@@ -566,13 +448,8 @@ impl State {
 
                     if current_tex_id == -1 {
                         // Initialize texture
-                        tex.initialize(
-                            &self.device,
-                            &self.queue,
-                            &self.texture_bind_group_layout,
-                            None,
-                        )
-                        .unwrap();
+                        tex.initialize(&self.display, &self.texture_bind_group_layout, None)
+                            .unwrap();
                         current_tex_id = tex.id() as i64;
 
                         render_pass.set_bind_group(0, &tex.get_texture().bind_group, &[]);
@@ -596,6 +473,7 @@ impl State {
                     let new_indices = mesh.indices().iter().map(|i| i + offset);
                     self.scratch_index_buffer.extend(new_indices);
                 }
+                _ => {}
             }
         }
 
@@ -620,18 +498,18 @@ impl State {
             len
         };
 
-        self.queue.write_buffer(
+        queue.write_buffer(
             &self.vertex_buffer,
             0,
             bytemuck::cast_slice(&self.scratch_vertex_buffer),
         );
-        self.queue.write_buffer(
+        queue.write_buffer(
             &self.index_buffer,
             0,
             bytemuck::cast_slice(&self.scratch_index_buffer),
         );
 
-        render_pass.set_bind_group(1, &self.scaling_bind_group, &[]);
+        render_pass.set_bind_group(1, self.scaling_state.bind_group(), &[]);
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
@@ -640,7 +518,7 @@ impl State {
 
         drop(render_pass);
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         self.scratch_vertex_buffer.clear();
@@ -650,62 +528,17 @@ impl State {
     }
 }
 
-struct SpineState {
-    _atlas: Atlas,
-    _skel_data: SkeletonData,
-    _anim_state_data: AnimationStateData,
-
-    skel: Skeleton,
-    anim: AnimationState,
-
-    last_render: Option<Instant>,
-}
-
-impl SpineState {
-    fn new(config: &Config) -> Result<Self> {
-        let atlas = Atlas::new(&config.atlas)?;
-        let skel_data = SkeletonData::new_binary(&atlas, &config.skel, 0.5)?;
-        let anim_data = AnimationStateData::new(&skel_data, 0.5)?;
-
-        let mut skel = Skeleton::new(&skel_data)?;
-        skel.set_x(0.0);
-        skel.set_y(0.0);
-
-        let mut anim = AnimationState::new(&anim_data)?;
-        if let Some(ref idle_name) = config.idle_animation {
-            anim.set_animation_by_name(0, idle_name, true);
-        }
-
-        Ok(Self {
-            _atlas: atlas,
-            _skel_data: skel_data,
-            _anim_state_data: anim_data,
-
-            skel,
-            anim,
-
-            last_render: None,
-        })
-    }
-
-    fn prepare_render(&mut self) {
-        let now = Instant::now();
-        let delta = if let Some(last_render) = self.last_render {
-            now - last_render
-        } else {
-            Duration::from_millis(0)
-        }
-        .as_secs_f32();
-        self.last_render = Some(now);
-
-        self.anim.update(delta);
-        self.skel.apply_animation(&self.anim);
-        self.skel.update_world_transform();
-    }
-}
-
 /// Make this window clickable or not (clicking passthrough)
+#[cfg(target_os = "windows")]
 fn set_click_passthrough(window: &Window, passthrough: bool) {
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WINDOW_EX_STYLE, WS_EX_LAYERED,
+            WS_EX_TRANSPARENT,
+        },
+    };
+
     unsafe {
         let hwnd: HWND = std::mem::transmute(window.hwnd());
         let window_styles: WINDOW_EX_STYLE = match GetWindowLongPtrW(hwnd, GWL_EXSTYLE) {
@@ -725,7 +558,11 @@ fn set_click_passthrough(window: &Window, passthrough: bool) {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn set_click_passthrough(_window: &Window, _passthrough: bool) {}
+
 fn main() {
+    // #[cfg(debug_assertions)]
     env_logger::init();
 
     let config_path = std::env::args()
@@ -772,7 +609,7 @@ fn main() {
                             config.window_position = (pos.x, pos.y);
                         }
 
-                        config.scale = state.scaling_uniform.scale;
+                        config.scale = state.scaling_state.model_scaling();
 
                         let _ = config::save(&config, &config_path);
                         *control_flow = ControlFlow::Exit;

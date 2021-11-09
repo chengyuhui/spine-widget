@@ -1,6 +1,5 @@
 ---
-skel: data/enemy_1184_cadkgt_3.skel.prefab
-atlas: data/enemy_1184_cadkgt_3.atlas.prefab
+pack: data/char_180_amgoat_1_front.zip
 actions:
   - trigger: Space
     sequence:
@@ -18,9 +17,9 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 413.6
-  - 249.6
+  - 348.8
+  - 459.2
 window_position:
-  - 1256.8
-  - 616.0
-scale: 0.5999999
+  - 700.0
+  - 258.4
+scale: 1.1

@@ -33,10 +33,8 @@ pub struct Action {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// Relative path to skeleton
-    pub skel: String,
-    /// Relative path to atlas
-    pub atlas: String,
+    /// Relative path to resource pack.
+    pub pack: String,
     /// List of actions that can be triggered by input
     pub actions: Vec<Action>,
     /// Animation to play on idle
