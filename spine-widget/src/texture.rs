@@ -16,8 +16,11 @@ pub struct TextureConfig {
     pub v_wrap: AtlasWrap,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TextureID(u32);
+
 pub struct Texture {
-    id: u32,
+    id: TextureID,
     state: TextureState,
     config: TextureConfig,
 }
@@ -30,13 +33,13 @@ enum TextureState {
 impl Texture {
     pub fn new(image: DynamicImage, config: TextureConfig) -> Self {
         Self {
-            id: TEX_ID.fetch_add(1, Ordering::SeqCst),
+            id: TextureID(TEX_ID.fetch_add(1, Ordering::SeqCst)),
             state: TextureState::Uninitialized(image),
             config,
         }
     }
 
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> TextureID {
         self.id
     }
 

@@ -9,6 +9,7 @@ struct ScalingUniform {
     window_width: f32,
     window_height: f32,
     scale: f32,
+    bottom_offset: f32,
 }
 
 #[derive(Debug)]
@@ -32,6 +33,7 @@ impl ScalingState {
                 window_width: window_logical_size.width,
                 window_height: window_logical_size.height,
                 scale: config.scale,
+                bottom_offset: config.bottom_offset,
             }
         };
 

@@ -45,6 +45,8 @@ pub struct Config {
     pub window_position: (f64, f64),
     #[serde(default = "default_scale")]
     pub scale: f32,
+    #[serde(default = "default_bottom_offset")]
+    pub bottom_offset: f32,
 }
 
 fn default_initial_size() -> (f64, f64) {
@@ -53,6 +55,10 @@ fn default_initial_size() -> (f64, f64) {
 
 fn default_scale() -> f32 {
     1.0
+}
+
+fn default_bottom_offset() -> f32 {
+    5.0
 }
 
 pub fn load(path: &str) -> Result<Config> {

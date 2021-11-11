@@ -1,5 +1,5 @@
 ---
-pack: data/char_180_amgoat_1_front.zip
+pack: data/char_1014_nearl2_front.zip
 actions:
   - trigger: Space
     sequence:
@@ -17,9 +17,10 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 348.8
-  - 459.2
+  - 314.0
+  - 174.0
 window_position:
-  - 700.0
-  - 258.4
-scale: 1.1
+  - 2987.0
+  - 713.0
+scale: 0.39999992
+bottom_offset: 10.0

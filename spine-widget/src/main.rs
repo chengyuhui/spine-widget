@@ -3,18 +3,21 @@
 //     windows_subsystem = "windows"
 // )]
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use anyhow::Result;
 use image::GenericImageView;
 use spine::{atlas::AtlasPage, spine_init, AttachmentType, SpineCallbacks};
-use texture::{Texture, TextureConfig};
+use texture::{Texture, TextureConfig, TextureID};
 use wgpu::IndexFormat;
 use winit::{
-    dpi::{LogicalPosition, LogicalSize},
+    dpi::{LogicalPosition, LogicalSize, PhysicalPosition},
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    platform::windows::WindowExtWindows,
+    platform::windows::{WindowBuilderExtWindows, WindowExtWindows},
     window::{Window, WindowBuilder},
 };
 
@@ -82,6 +85,70 @@ impl SpineCallbacks for SpineCb {
 }
 spine_init!(SpineCb);
 
+struct ScratchBuffers {
+    index: usize,
+    vertex_buffers: Vec<(TextureID, Vec<Vertex>)>,
+    index_buffers: Vec<(TextureID, Vec<u16>)>,
+}
+
+impl ScratchBuffers {
+    fn new() -> Self {
+        Self {
+            index: 0,
+            vertex_buffers: Vec::new(),
+            index_buffers: Vec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.vertex_buffers.iter_mut().for_each(|(_, v)| v.clear());
+        self.index_buffers.iter_mut().for_each(|(_, v)| v.clear());
+        self.index = 0;
+    }
+
+    fn get_buffers_mut(&mut self, tex_id: TextureID) -> (&mut Vec<Vertex>, &mut Vec<u16>) {
+        let vb_last = self.vertex_buffers.get_mut(self.index);
+        let ib_last = self.index_buffers.get_mut(self.index);
+
+        match (vb_last, ib_last) {
+            (Some((vb_id, _)), Some((ib_id, _))) => {
+                debug_assert_eq!(vb_id, ib_id);
+
+                if *vb_id != tex_id {
+                    self.index += 1;
+
+                    let vb_next = self.vertex_buffers.get_mut(self.index);
+                    let ib_next = self.index_buffers.get_mut(self.index);
+
+                    match (vb_next, ib_next) {
+                        (Some((vb_next_id, vb_next)), Some((ib_next_id, ib_next))) => {
+                            debug_assert!(vb_next.is_empty() && ib_next.is_empty());
+                            *vb_next_id = tex_id;
+                            *ib_next_id = tex_id;
+                        }
+                        (None, None) => {
+                            self.vertex_buffers.push((tex_id, Vec::new()));
+                            self.index_buffers.push((tex_id, Vec::new()));
+                        }
+                        _ => panic!(),
+                    }
+                }
+            }
+            (None, None) => {
+                // Create new buffers
+                self.vertex_buffers.push((tex_id, Vec::new()));
+                self.index_buffers.push((tex_id, Vec::new()));
+            }
+            _ => panic!(),
+        }
+
+        (
+            &mut self.vertex_buffers[self.index].1,
+            &mut self.index_buffers[self.index].1,
+        )
+    }
+}
+
 struct State {
     display: Display,
     size: winit::dpi::PhysicalSize<u32>,
@@ -95,8 +162,7 @@ struct State {
 
     spine: SpineState,
     world_vertices: Vec<[f32; 2]>,
-    scratch_vertex_buffer: Vec<Vertex>,
-    scratch_index_buffer: Vec<u16>,
+    scratch_buffers: ScratchBuffers,
 
     pressed_keys: HashSet<VirtualKeyCode>,
     modifiers_state: ModifiersState,
@@ -168,7 +234,7 @@ impl State {
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
                     format: display.config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 }],
             }),
@@ -221,8 +287,7 @@ impl State {
 
             spine,
             world_vertices: Vec::new(),
-            scratch_vertex_buffer: Vec::new(),
-            scratch_index_buffer: Vec::new(),
+            scratch_buffers: ScratchBuffers::new(),
 
             pressed_keys: HashSet::new(),
             modifiers_state: Default::default(),
@@ -356,27 +421,7 @@ impl State {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder =
-            self.display
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Render Encoder"),
-                });
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
-            color_attachments: &[wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: true,
-                },
-            }],
-            depth_stencil_attachment: None,
-        });
-
-        let mut current_tex_id = -1i64;
+        let mut textures = HashMap::new();
 
         let skel_tint = self.spine.skel.tint_color();
         for slot in self.spine.skel.slots() {
@@ -409,19 +454,17 @@ impl State {
                     } else {
                         continue;
                     };
+                    let tex_id = tex.id();
 
-                    if current_tex_id == -1 {
-                        // Initialize texture
-                        tex.initialize(&self.display, &self.texture_bind_group_layout, None)
-                            .unwrap();
-                        current_tex_id = tex.id() as i64;
-
-                        render_pass.set_bind_group(0, &tex.get_texture().bind_group, &[]);
-                    } else if current_tex_id != tex.id() as i64 {
-                        unimplemented!();
+                    tex.initialize(&self.display, &self.texture_bind_group_layout, None)
+                        .unwrap();
+                    if !textures.contains_key(&tex_id) {
+                        textures.insert(tex_id, tex);
                     }
 
-                    let offset = self.scratch_vertex_buffer.len() as u16;
+                    let (scratch_vb, scratch_ib) = self.scratch_buffers.get_buffers_mut(tex_id);
+
+                    let offset = scratch_vb.len() as u16;
                     region.compute_world_vertices(&mut self.world_vertices);
                     let new_vectors = self
                         .world_vertices
@@ -432,10 +475,10 @@ impl State {
                             ([u, v], *p)
                         })
                         .map(to_vertex);
-                    self.scratch_vertex_buffer.extend(new_vectors);
+                    scratch_vb.extend(new_vectors);
 
                     let new_indices = [0, 1, 2, 2, 3, 0].iter().map(|i| i + offset);
-                    self.scratch_index_buffer.extend(new_indices);
+                    scratch_ib.extend(new_indices);
                 }
                 AttachmentType::Mesh(mesh) => {
                     let tex = if let Some(tex) =
@@ -445,19 +488,17 @@ impl State {
                     } else {
                         continue;
                     };
+                    let tex_id = tex.id();
 
-                    if current_tex_id == -1 {
-                        // Initialize texture
-                        tex.initialize(&self.display, &self.texture_bind_group_layout, None)
-                            .unwrap();
-                        current_tex_id = tex.id() as i64;
-
-                        render_pass.set_bind_group(0, &tex.get_texture().bind_group, &[]);
-                    } else if current_tex_id != tex.id() as i64 {
-                        unimplemented!();
+                    tex.initialize(&self.display, &self.texture_bind_group_layout, None)
+                        .unwrap();
+                    if !textures.contains_key(&tex_id) {
+                        textures.insert(tex_id, tex);
                     }
 
-                    let offset = self.scratch_vertex_buffer.len() as u16;
+                    let (scratch_vb, scratch_ib) = self.scratch_buffers.get_buffers_mut(tex_id);
+
+                    let offset = scratch_vb.len() as u16;
                     mesh.compute_world_vertices(&mut self.world_vertices);
                     let new_vectors = self
                         .world_vertices
@@ -468,61 +509,92 @@ impl State {
                             ([u, v], *p)
                         })
                         .map(to_vertex);
-                    self.scratch_vertex_buffer.extend(new_vectors);
+                    scratch_vb.extend(new_vectors);
 
                     let new_indices = mesh.indices().iter().map(|i| i + offset);
-                    self.scratch_index_buffer.extend(new_indices);
+                    scratch_ib.extend(new_indices);
                 }
                 _ => {}
             }
         }
 
+        let mut cleared = false;
+
+        for ((tex_id_v, vb), (tex_id_i, ib)) in self
+            .scratch_buffers
+            .vertex_buffers
+            .iter_mut()
+            .zip(self.scratch_buffers.index_buffers.iter_mut())
         {
-            let len = self.scratch_vertex_buffer.len();
-            let vb_pad = len % 4;
-            if vb_pad != 0 {
-                self.scratch_vertex_buffer.resize(
-                    self.scratch_vertex_buffer.len() + 4 - vb_pad,
-                    Default::default(),
-                );
+            if vb.is_empty() {
+                continue;
             }
-        };
 
-        let ib_len = {
-            let len = self.scratch_index_buffer.len();
-            let ib_pad = len % 4;
-            if ib_pad != 0 {
-                self.scratch_index_buffer
-                    .resize(self.scratch_index_buffer.len() + 4 - ib_pad, 0);
+            debug_assert_eq!(tex_id_v, tex_id_i);
+
+            {
+                let len = vb.len();
+                let vb_pad = len % 4;
+                if vb_pad != 0 {
+                    vb.resize(vb.len() + 4 - vb_pad, Default::default());
+                }
             }
-            len
-        };
+            let ib_len = {
+                let len = ib.len();
+                let ib_pad = len % 4;
+                if ib_pad != 0 {
+                    ib.resize(ib.len() + 4 - ib_pad, 0);
+                }
+                len
+            };
 
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.scratch_vertex_buffer),
-        );
-        queue.write_buffer(
-            &self.index_buffer,
-            0,
-            bytemuck::cast_slice(&self.scratch_index_buffer),
-        );
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(vb));
+            queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(ib));
 
-        render_pass.set_bind_group(1, self.scaling_state.bind_group(), &[]);
-        render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+            let mut encoder =
+                self.display
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Render Encoder"),
+                    });
 
-        render_pass.draw_indexed(0..ib_len as u32, 0, 0..1);
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if cleared {
+                            wgpu::LoadOp::Load
+                        } else {
+                            cleared = true;
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        },
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: None,
+            });
 
-        drop(render_pass);
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(
+                0,
+                &textures.get(&tex_id_v).unwrap().get_texture().bind_group,
+                &[],
+            );
+            render_pass.set_bind_group(1, self.scaling_state.bind_group(), &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
 
-        queue.submit(std::iter::once(encoder.finish()));
+            render_pass.draw_indexed(0..ib_len as u32, 0, 0..1);
+
+            drop(render_pass);
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
         output.present();
 
-        self.scratch_vertex_buffer.clear();
-        self.scratch_index_buffer.clear();
+        self.scratch_buffers.clear();
 
         Ok(())
     }
@@ -535,7 +607,7 @@ fn set_click_passthrough(window: &Window, passthrough: bool) {
         Foundation::HWND,
         UI::WindowsAndMessaging::{
             GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WINDOW_EX_STYLE, WS_EX_LAYERED,
-            WS_EX_TRANSPARENT,
+            WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
         },
     };
 
@@ -547,9 +619,9 @@ fn set_click_passthrough(window: &Window, passthrough: bool) {
         };
 
         let window_styles = if passthrough {
-            window_styles | WS_EX_TRANSPARENT | WS_EX_LAYERED
+            window_styles | WS_EX_TRANSPARENT | WS_EX_LAYERED //| WS_EX_TOOLWINDOW
         } else {
-            window_styles & !WS_EX_TRANSPARENT | WS_EX_LAYERED
+            window_styles & !WS_EX_TRANSPARENT | WS_EX_LAYERED //| WS_EX_TOOLWINDOW
         };
 
         if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, window_styles.0.try_into().unwrap()) == 0 {
@@ -561,6 +633,33 @@ fn set_click_passthrough(window: &Window, passthrough: bool) {
 #[cfg(not(target_os = "windows"))]
 fn set_click_passthrough(_window: &Window, _passthrough: bool) {}
 
+fn create_window(event_loop: &EventLoop<()>, owner: &Window, config: &Config) -> Window {
+    let window = WindowBuilder::new()
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_inner_size(LogicalSize::new(config.window_size.0, config.window_size.1))
+        .with_owner_window(owner.hwnd() as _)
+        .build(&event_loop)
+        .unwrap();
+
+    window.set_outer_position(PhysicalPosition::new(
+        config.window_position.0,
+        config.window_position.1,
+    ));
+    window.set_title("spine-widget");
+    window.set_always_on_top(true);
+    set_click_passthrough(&window, true);
+
+    window
+}
+
+/// This window is required to hide the main window from the taskbar.
+fn create_owner_window(event_loop: &EventLoop<()>) -> Window {
+    let window = WindowBuilder::new().build(event_loop).unwrap();
+    window.set_visible(false);
+    window
+}
+
 fn main() {
     // #[cfg(debug_assertions)]
     env_logger::init();
@@ -568,24 +667,11 @@ fn main() {
     let config_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "config.yml".to_string());
-
     let mut config = config::load(&config_path).unwrap();
 
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_decorations(false)
-        .with_transparent(true)
-        .with_inner_size(LogicalSize::new(config.window_size.0, config.window_size.1))
-        .build(&event_loop)
-        .unwrap();
-
-    window.set_outer_position(LogicalPosition::new(
-        config.window_position.0,
-        config.window_position.1,
-    ));
-    window.set_title("spine-widget");
-    window.set_always_on_top(true);
-    set_click_passthrough(&window, true);
+    let owner_window = create_owner_window(&event_loop);
+    let window = create_window(&event_loop, &owner_window, &config);
 
     let mut state = pollster::block_on(State::new(&window, &config));
 
@@ -602,10 +688,8 @@ fn main() {
                             window.inner_size().to_logical::<f64>(window.scale_factor());
                         config.window_size = (logical_size.width, logical_size.height);
 
-                        let logical_pos = window
-                            .outer_position()
-                            .map(|p| p.to_logical::<f64>(window.scale_factor()));
-                        if let Ok(pos) = logical_pos {
+                        if let Ok(pos) = window.outer_position() {
+                            let pos = pos.cast();
                             config.window_position = (pos.x, pos.y);
                         }
 
@@ -631,6 +715,12 @@ fn main() {
                 }
             }
         }
+        // Event::WindowEvent {
+        //     ref event,
+        //     window_id,
+        // } if window_id == owner_window.id() => match event {
+        //     _ => {}
+        // },
         Event::RedrawRequested(_) => {
             state.update();
             match state.render() {
