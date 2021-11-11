@@ -17,10 +17,10 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 314.0
-  - 174.0
+  - 298.0
+  - 261.0
 window_position:
   - 2987.0
-  - 713.0
+  - 587.0
 scale: 0.39999992
 bottom_offset: 10.0

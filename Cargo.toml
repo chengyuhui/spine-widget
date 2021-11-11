@@ -6,5 +6,7 @@ members = [
     "spine-widget"
 ]
 
+exclude = ["./trayicon-rs"]
+
 [profile.release]
 debug = true
