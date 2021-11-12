@@ -1,5 +1,5 @@
 ---
-pack: data/char_1014_nearl2_front.zip
+pack: data/enemy_1184_cadkgt_3.zip
 actions:
   - trigger: Space
     sequence:
@@ -17,10 +17,10 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 298.0
-  - 261.0
+  - 284.0
+  - 256.8
 window_position:
-  - 2987.0
-  - 587.0
+  - 924.0
+  - 763.0
 scale: 0.39999992
 bottom_offset: 10.0

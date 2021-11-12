@@ -13,7 +13,7 @@ use image::GenericImageView;
 use spine::{atlas::AtlasPage, spine_init, AttachmentType, SpineCallbacks};
 use texture::{Texture, TextureConfig};
 
-use trayicon::{MenuBuilder, TrayIcon, TrayIconBuilder};
+use trayicon::{MenuBuilder, MenuItem, TrayIcon, TrayIconBuilder};
 use wgpu::IndexFormat;
 use window_ext::SpineWidgetWindowExt;
 use winit::{
@@ -94,6 +94,9 @@ spine_init!(SpineCb);
 #[derive(Clone, Eq, PartialEq, Debug)]
 enum UserEvent {
     ToggleWindowed,
+    ToggleClickPassthrough,
+    SetOpacity(u8),
+    About,
     Exit,
 }
 
@@ -109,6 +112,8 @@ struct State {
     texture_bind_group_layout: wgpu::BindGroupLayout,
 
     scaling_state: ScalingState,
+    /// Opacity value from 0 to 100.
+    opacity: u8,
 
     spine: SpineState,
     world_vertices: Vec<[f32; 2]>,
@@ -116,7 +121,9 @@ struct State {
 
     pressed_keys: HashSet<VirtualKeyCode>,
     modifiers_state: ModifiersState,
+
     windowed: bool,
+    click_passthrough: bool,
 
     tray: TrayIcon<UserEvent>,
 }
@@ -190,7 +197,7 @@ impl State {
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
                     format: display.config.format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 }],
             }),
@@ -250,6 +257,7 @@ impl State {
             texture_bind_group_layout,
 
             scaling_state,
+            opacity: 100,
 
             spine,
             world_vertices: Vec::new(),
@@ -257,10 +265,16 @@ impl State {
 
             pressed_keys: HashSet::new(),
             modifiers_state: Default::default(),
+
             windowed: false,
+            click_passthrough: true,
 
             tray,
         };
+
+        r.set_windowed(false);
+        r.set_click_passthrough(true);
+
         r.update_tray();
 
         r
@@ -271,15 +285,37 @@ impl State {
         let _ = tray.set_menu(
             &MenuBuilder::new()
                 .checkable("窗口化/调整大小", self.windowed, UserEvent::ToggleWindowed)
+                .checkable(
+                    "鼠标点击穿透",
+                    self.click_passthrough,
+                    UserEvent::ToggleClickPassthrough,
+                )
+                .submenu("不透明度", {
+                    let mut submenu = MenuBuilder::new();
+
+                    for i in (10..=100).step_by(10) {
+                        submenu = submenu.checkable(
+                            &format!("{}%", i),
+                            self.opacity == i,
+                            UserEvent::SetOpacity(i as u8),
+                        );
+                    }
+
+                    submenu
+                })
                 .separator()
+                .with(MenuItem::Item {
+                    id: UserEvent::About,
+                    name: format!("Mon3tr-Widget {}", env!("VERGEN_GIT_SEMVER")),
+                    disabled: true,
+                    icon: None,
+                })
                 .item("退出", UserEvent::Exit),
         );
     }
 
     fn set_windowed(&mut self, windowed: bool) {
-        self.window.set_decorations(windowed);
-        self.window.set_click_passthrough(!windowed);
-        self.window.set_tool_window(!windowed);
+        self.window.set_decorations(windowed); // Hide window borders.
 
         self.windowed = windowed;
         self.update_tray();
@@ -287,6 +323,24 @@ impl State {
 
     fn toggle_windowed(&mut self) {
         self.set_windowed(!self.windowed);
+    }
+
+    fn set_click_passthrough(&mut self, click_passthrough: bool) {
+        self.window.set_click_passthrough(click_passthrough);
+        self.window.set_enable(!click_passthrough); // Also hides window from task switcher if disabled.
+
+        self.click_passthrough = click_passthrough;
+        self.update_tray();
+    }
+
+    fn toggle_click_passthrough(&mut self) {
+        self.set_click_passthrough(!self.click_passthrough);
+    }
+
+    /// Set opacity of the model, from 0 to 100.
+    fn set_opacity(&mut self, opacity: u8) {
+        self.opacity = opacity;
+        self.update_tray();
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -301,7 +355,6 @@ impl State {
 
     fn scale(&mut self, scale_factor: f64) {
         self.scale_factor = scale_factor;
-
         self.scaling_state.resize(self.size, scale_factor);
     }
 
@@ -401,6 +454,7 @@ impl State {
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.spine.prepare_render();
+        let opacity = self.opacity as f32 / 100.0;
 
         let queue = &self.display.queue;
 
@@ -424,7 +478,7 @@ impl State {
                 skel_tint[0] * slot_tint[0],
                 skel_tint[1] * slot_tint[1],
                 skel_tint[2] * slot_tint[2],
-                skel_tint[3] * slot_tint[3],
+                skel_tint[3] * slot_tint[3] * opacity,
             ];
 
             let to_vertex = |(uv, pos): ([f32; 2], [f32; 2])| Vertex {
@@ -452,7 +506,7 @@ impl State {
 
                     let offset = scratch_vb.len() as u16;
                     region.compute_world_vertices(&mut self.world_vertices);
-                    let new_vectors = self
+                    let new_vertices = self
                         .world_vertices
                         .iter()
                         .enumerate()
@@ -461,7 +515,7 @@ impl State {
                             ([u, v], *p)
                         })
                         .map(to_vertex);
-                    scratch_vb.extend(new_vectors);
+                    scratch_vb.extend(new_vertices);
 
                     let new_indices = [0, 1, 2, 2, 3, 0].iter().map(|i| i + offset);
                     scratch_ib.extend(new_indices);
@@ -484,7 +538,7 @@ impl State {
 
                     let offset = scratch_vb.len() as u16;
                     mesh.compute_world_vertices(&mut self.world_vertices);
-                    let new_vectors = self
+                    let new_vertices = self
                         .world_vertices
                         .iter()
                         .enumerate()
@@ -493,7 +547,7 @@ impl State {
                             ([u, v], *p)
                         })
                         .map(to_vertex);
-                    scratch_vb.extend(new_vectors);
+                    scratch_vb.extend(new_vertices);
 
                     let new_indices = mesh.indices().iter().map(|i| i + offset);
                     scratch_ib.extend(new_indices);
@@ -579,6 +633,8 @@ impl State {
 
 fn create_window<T>(event_loop: &EventLoop<T>, owner: &Window, config: &Config) -> Window {
     let window = WindowBuilder::new()
+        .with_title("Mon3tr-Widget")
+        .with_always_on_top(true)
         .with_decorations(false)
         .with_transparent(true)
         .with_inner_size(LogicalSize::new(config.window_size.0, config.window_size.1))
@@ -590,24 +646,55 @@ fn create_window<T>(event_loop: &EventLoop<T>, owner: &Window, config: &Config) 
         config.window_position.0,
         config.window_position.1,
     ));
-    window.set_title("spine-widget");
-    window.set_always_on_top(true);
-    window.set_click_passthrough(true);
-    window.set_tool_window(true);
 
     window
 }
 
 /// This window is required to hide the main window from the taskbar.
 fn create_owner_window<Evt>(event_loop: &EventLoop<Evt>) -> Window {
-    let window = WindowBuilder::new().build(event_loop).unwrap();
-    window.set_visible(false);
-    window
+    WindowBuilder::new()
+        .with_visible(false)
+        .build(event_loop)
+        .unwrap()
+}
+
+fn init_logging() {
+    use fern::colors::ColoredLevelConfig;
+
+    let colors = ColoredLevelConfig::new();
+    fern::Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                colors.color(record.level()),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        .apply()
+        .unwrap();
 }
 
 fn main() {
     // #[cfg(debug_assertions)]
-    env_logger::init();
+    init_logging();
+
+    log::info!(
+        "Mon3tr-Widget {} {} built {}",
+        env!("VERGEN_GIT_SEMVER"),
+        env!("VERGEN_CARGO_PROFILE"),
+        env!("VERGEN_BUILD_TIMESTAMP")
+    );
+    log::info!(
+        "Toolchain: {}@{}({}) target {}",
+        env!("VERGEN_RUSTC_CHANNEL"),
+        env!("VERGEN_RUSTC_SEMVER"),
+        env!("VERGEN_RUSTC_COMMIT_DATE"),
+        env!("VERGEN_CARGO_TARGET_TRIPLE")
+    );
 
     let config_path = std::env::args()
         .nth(1)
@@ -652,7 +739,7 @@ fn main() {
                     }
                 }
             }
-            Event::RedrawRequested(_) => {
+            Event::RedrawRequested(window_id) if window_id == state.window.id() => {
                 state.update();
                 match state.render() {
                     Ok(_) => {}
@@ -691,6 +778,13 @@ fn main() {
                 UserEvent::ToggleWindowed => {
                     state.toggle_windowed();
                 }
+                UserEvent::ToggleClickPassthrough => {
+                    state.toggle_click_passthrough();
+                }
+                UserEvent::SetOpacity(opacity) => {
+                    state.set_opacity(opacity);
+                }
+                UserEvent::About => {}
                 UserEvent::Exit => {
                     close_requested = true;
                 }

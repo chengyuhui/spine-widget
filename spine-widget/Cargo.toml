@@ -8,8 +8,9 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 
-env_logger = "0.9"
 log = "0.4"
+fern = { version = "0.5", features = ["colored"] }
+chrono = "0.4"
 
 spine = { path = "../spine" }
 bytemuck = { version = "1.4", features = ["derive"] }
@@ -30,3 +31,6 @@ windows = { version = "0.24", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 trayicon = { path = "../trayicon-rs", features = ["winit"] }
+
+[build-dependencies]
+vergen = "5"
