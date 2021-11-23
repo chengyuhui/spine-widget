@@ -1,5 +1,5 @@
 [package]
-name = "spine-widget"
+name = "mon3tr-widget"
 version = "0.1.0"
 edition = "2021"
 
@@ -29,6 +29,7 @@ zip = "0.5"
 windows = { version = "0.24", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
 trayicon = { path = "../trayicon-rs", features = ["winit"] }
 

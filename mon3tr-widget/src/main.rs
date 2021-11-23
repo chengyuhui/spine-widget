@@ -27,6 +27,7 @@ use winit::{
 mod buffer;
 mod config;
 mod display;
+mod hook;
 mod scaling;
 mod spine_state;
 mod texture;
@@ -34,6 +35,7 @@ mod utils;
 mod vertex;
 mod window_ext;
 
+use crate::hook::KeyboardHook;
 use buffer::ScratchBuffers;
 use config::Config;
 use display::Display;
@@ -92,12 +94,17 @@ impl SpineCallbacks for SpineCb {
 spine_init!(SpineCb);
 
 #[derive(Clone, Eq, PartialEq, Debug)]
-enum UserEvent {
+pub enum UserEvent {
     ToggleWindowed,
     ToggleClickPassthrough,
     SetOpacity(u8),
     About,
     Exit,
+    GlobalKey {
+        state: ElementState,
+        vk_code: u32,
+        modifiers: ModifiersState,
+    },
 }
 
 struct State {
@@ -704,6 +711,7 @@ fn main() {
     let event_loop = EventLoop::<UserEvent>::with_user_event();
     let owner_window = create_owner_window(&event_loop);
     let window = create_window(&event_loop, &owner_window, &config);
+    let keyboard_hook = KeyboardHook::new(event_loop.create_proxy());
 
     let mut state = pollster::block_on(State::new(window, &event_loop, &config));
 
@@ -711,6 +719,7 @@ fn main() {
 
     event_loop.run(move |event, _, control_flow| {
         let _ = owner_window;
+        let _ = keyboard_hook;
 
         match event {
             Event::WindowEvent {
@@ -788,6 +797,14 @@ fn main() {
                 UserEvent::Exit => {
                     close_requested = true;
                 }
+                UserEvent::GlobalKey {
+                    state: ElementState::Pressed,
+                    vk_code,
+                    modifiers,
+                } => {
+                    dbg!(vk_code);
+                }
+                _ => {}
             },
             _ => {}
         }

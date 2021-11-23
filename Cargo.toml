@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "spine-sys",
     "spine",
-    "spine-widget"
+    "mon3tr-widget"
 ]
 
 exclude = ["./trayicon-rs"]
