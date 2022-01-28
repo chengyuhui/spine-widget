@@ -1,4 +1,4 @@
-use std::{ffi::CString, ptr::null_mut, sync::Arc};
+use std::{ffi::{CString, CStr}, marker::PhantomData, ptr::null_mut, slice, sync::Arc};
 
 use anyhow::{bail, Result};
 use spine_sys::{spAtlas, spAtlasPage, spAtlasRegion, spAtlas_createFromFile, spAtlas_dispose};
@@ -7,6 +7,7 @@ use spine_sys::{spAtlas, spAtlasPage, spAtlasRegion, spAtlas_createFromFile, spA
 pub(crate) struct AtlasPtr(pub(crate) *mut spAtlas);
 impl Drop for AtlasPtr {
     fn drop(&mut self) {
+        log::info!("Atlas@{:x} dropped", self.0 as usize);
         unsafe { spAtlas_dispose(self.0) };
     }
 }
@@ -29,6 +30,32 @@ impl Atlas {
             ptr: Arc::new(AtlasPtr(inner)),
         })
     }
+
+    // pub fn regions(&self) -> &[AtlasRegion] {
+    //     unsafe {
+    //         let regions = (*self.ptr.0).regions as *mut AtlasRegion;
+    //         let mut count = 0;
+    //         while !regions.offset(count).is_null() {
+    //             count += 1;
+    //         }
+    //         slice::from_raw_parts(regions, count as usize)
+    //     }
+    // }
+
+    pub fn first_region(&self) -> Option<&AtlasRegion> {
+        unsafe { ((*self.ptr.0).regions as *const AtlasRegion).as_ref() }
+    }
+
+    pub fn pages(&self) -> &[AtlasPage] {
+        unsafe {
+            let pages = (*self.ptr.0).pages as *mut AtlasPage;
+            let mut count = 0;
+            while !pages.offset(count).is_null() {
+                count += 1;
+            }
+            slice::from_raw_parts(pages, count as usize)
+        }
+    }
 }
 
 #[repr(C)]
@@ -38,9 +65,77 @@ pub struct AtlasRegion {
 }
 
 impl AtlasRegion {
+    pub fn name(&self) -> &str {
+        unsafe { CStr::from_ptr(self.inner.name).to_str().unwrap() }
+    }
+
     #[inline]
     pub fn page(&self) -> &AtlasPage {
         unsafe { &*(self.inner.page as *const AtlasPage) }
+    }
+
+    pub fn x(&self) -> u32 {
+        self.inner.x as u32
+    }
+
+    pub fn y(&self) -> u32 {
+        self.inner.y as u32
+    }
+
+    pub fn width(&self) -> u32 {
+        self.inner.width as u32
+    }
+
+    pub fn height(&self) -> u32 {
+        self.inner.height as u32
+    }
+
+    pub fn u(&self) -> f32 {
+        self.inner.u as f32
+    }
+
+    pub fn v(&self) -> f32 {
+        self.inner.v as f32
+    }
+
+    pub fn u2(&self) -> f32 {
+        self.inner.u2 as f32
+    }
+
+    pub fn v2(&self) -> f32 {
+        self.inner.v2 as f32
+    }
+
+    pub fn offset_x(&self) -> f32 {
+        self.inner.offsetX as f32
+    }
+
+    pub fn offset_y(&self) -> f32 {
+        self.inner.offsetY as f32
+    }
+
+    pub fn original_width(&self) -> u32 {
+        self.inner.originalWidth as u32
+    }
+
+    pub fn original_height(&self) -> u32 {
+        self.inner.originalHeight as u32
+    }
+
+    pub fn index(&self) -> u32 {
+        self.inner.index as u32
+    }
+
+    pub fn rotated(&self) -> bool {
+        self.inner.rotate != 0
+    }
+
+    pub fn flipped(&self) -> bool {
+        self.inner.flip != 0
+    }
+
+    pub fn next_region(&self) -> Option<&'static AtlasRegion> {
+        unsafe { (self.inner.next as *const AtlasRegion).as_ref() }
     }
 }
 
@@ -52,7 +147,7 @@ pub struct AtlasPage {
 
 impl AtlasPage {
     /// Retrieve the texture object returned in [`crate::SpineCallbacks`].
-    /// 
+    ///
     /// # Safety
     /// This is unsafe if the type given does not match the type actually put as texture.
     #[inline]
@@ -61,11 +156,11 @@ impl AtlasPage {
     }
 
     pub fn mag_filter(&self) -> AtlasFilter {
-        unsafe { std::mem::transmute(self.inner.magFilter)}
+        unsafe { std::mem::transmute(self.inner.magFilter) }
     }
 
     pub fn min_filter(&self) -> AtlasFilter {
-        unsafe { std::mem::transmute(self.inner.minFilter)}
+        unsafe { std::mem::transmute(self.inner.minFilter) }
     }
 
     pub fn u_wrap(&self) -> AtlasWrap {

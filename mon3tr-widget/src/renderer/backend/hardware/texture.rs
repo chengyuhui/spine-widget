@@ -1,97 +1,29 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 
-use anyhow::*;
+use anyhow::Result;
 use image::{DynamicImage, GenericImageView};
 use spine::atlas::{AtlasFilter, AtlasWrap};
 use wgpu::util::DeviceExt;
 
-use crate::display::Display;
+use crate::renderer::texture::TextureConfig;
 
-static TEX_ID: AtomicU32 = AtomicU32::new(0);
-
-pub struct TextureConfig {
-    pub mag_filter: AtlasFilter,
-    pub min_filter: AtlasFilter,
-    pub u_wrap: AtlasWrap,
-    pub v_wrap: AtlasWrap,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TextureID(u32);
-
-pub struct Texture {
-    id: TextureID,
-    state: TextureState,
-    config: TextureConfig,
-}
-
-enum TextureState {
-    Uninitialized(DynamicImage),
-    Initialized(InitializedTexture),
-}
-
-impl Texture {
-    pub fn new(image: DynamicImage, config: TextureConfig) -> Self {
-        Self {
-            id: TextureID(TEX_ID.fetch_add(1, Ordering::SeqCst)),
-            state: TextureState::Uninitialized(image),
-            config,
-        }
-    }
-
-    pub fn id(&self) -> TextureID {
-        self.id
-    }
-
-    pub fn initialize(
-        &mut self,
-        display: &Display,
-        layout: &wgpu::BindGroupLayout,
-        label: Option<&str>,
-    ) -> Result<()> {
-        let image = match &self.state {
-            TextureState::Uninitialized(image) => image,
-            TextureState::Initialized(_) => return Ok(()),
-        };
-
-        let texture = InitializedTexture::from_image(
-            &display.device,
-            &display.queue,
-            layout,
-            image,
-            &self.config,
-            label,
-        )?;
-
-        self.state = TextureState::Initialized(texture);
-
-        Ok(())
-    }
-
-    pub fn get_texture(&self) -> &InitializedTexture {
-        match &self.state {
-            TextureState::Uninitialized(_) => panic!("Texture is not initialized"),
-            TextureState::Initialized(texture) => texture,
-        }
-    }
-}
-
-pub struct InitializedTexture {
+pub struct HardwareTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
+    pub image: Weak<DynamicImage>, // TODO: cleanup when image is dropped
 }
 
-impl InitializedTexture {
+impl HardwareTexture {
     pub fn from_image(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
-        img: &image::DynamicImage,
+        img: Arc<DynamicImage>,
         config: &TextureConfig,
         label: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Self {
         let rgba = img.as_rgba8().unwrap();
         let dimensions = img.dimensions();
 
@@ -156,11 +88,16 @@ impl InitializedTexture {
             label: Some("cartoon_bind_group"),
         });
 
-        Ok(Self {
+        Self {
             texture,
             view,
             sampler,
             bind_group,
-        })
+            image: Arc::downgrade(&img),
+        }
+    }
+
+    pub fn should_gc(&self) -> bool {
+        self.image.upgrade().is_none()
     }
 }

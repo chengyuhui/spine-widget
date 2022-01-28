@@ -31,13 +31,13 @@ struct EventLoopProxyWrapper {
 /// This is safe because we're only using it in the keyboard hook callback.
 unsafe impl Sync for EventLoopProxyWrapper {}
 
-const VK_SHIFT_VAL: u16 = VK_SHIFT.0;
-const VK_LCONTROL_VAL: u16 = VK_LCONTROL.0;
-const VK_RCONTROL_VAL: u16 = VK_RCONTROL.0;
-const VK_LMENU_VAL: u16 = VK_LMENU.0;
-const VK_RMENU_VAL: u16 = VK_RMENU.0;
-const VK_LWIN_VAL: u16 = VK_LWIN.0;
-const VK_RWIN_VAL: u16 = VK_RWIN.0;
+const VK_SHIFT_VAL: u16 = VK_SHIFT;
+const VK_LCONTROL_VAL: u16 = VK_LCONTROL;
+const VK_RCONTROL_VAL: u16 = VK_RCONTROL;
+const VK_LMENU_VAL: u16 = VK_LMENU;
+const VK_RMENU_VAL: u16 = VK_RMENU;
+const VK_LWIN_VAL: u16 = VK_LWIN;
+const VK_RWIN_VAL: u16 = VK_RWIN;
 
 unsafe extern "system" fn keyboard_proc(
     n_code: c_int,
@@ -70,7 +70,7 @@ unsafe extern "system" fn keyboard_proc(
         (VK_LWIN, ModifiersState::LOGO),
         (VK_RWIN, ModifiersState::LOGO),
     ] {
-        let status = GetKeyState(vk.0 as _) < 0;
+        let status = GetKeyState(vk as _) < 0;
         if status {
             modifiers_state |= mask;
         }
@@ -102,7 +102,7 @@ unsafe extern "system" fn keyboard_proc(
         _ => {}
     }
 
-    return CallNextHookEx(HHOOK::default(), n_code, w_param, l_param);
+    CallNextHookEx(HHOOK::default(), n_code, w_param, l_param)
 }
 
 pub struct KeyboardHook {

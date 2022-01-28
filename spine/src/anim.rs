@@ -1,7 +1,18 @@
-use std::{ffi::CString, os::raw::c_int, sync::Arc};
+use std::{
+    ffi::{CStr, CString},
+    fmt::Debug,
+    os::raw::c_int,
+    sync::Arc,
+};
 
-use anyhow::{Result, bail};
-use spine_sys::{spAnimationState, spAnimationStateData, spAnimationStateData_create, spAnimationStateData_dispose, spAnimationState_addAnimationByName, spAnimationState_addEmptyAnimation, spAnimationState_clearTrack, spAnimationState_clearTracks, spAnimationState_create, spAnimationState_dispose, spAnimationState_setAnimationByName, spAnimationState_setEmptyAnimation, spAnimationState_update};
+use anyhow::{bail, Result};
+use spine_sys::{
+    spAnimation, spAnimationState, spAnimationStateData, spAnimationStateData_create,
+    spAnimationStateData_dispose, spAnimationState_addAnimationByName,
+    spAnimationState_addEmptyAnimation, spAnimationState_clearTrack, spAnimationState_clearTracks,
+    spAnimationState_create, spAnimationState_dispose, spAnimationState_setAnimationByName,
+    spAnimationState_setEmptyAnimation, spAnimationState_update,
+};
 
 use crate::SkeletonData;
 
@@ -117,5 +128,29 @@ impl AnimationState {
 impl Drop for AnimationState {
     fn drop(&mut self) {
         unsafe { spAnimationState_dispose(self.ptr) };
+    }
+}
+
+#[repr(C)]
+pub struct Animation {
+    pub(crate) inner: spAnimation,
+}
+
+impl Animation {
+    pub fn name(&self) -> &str {
+        unsafe { CStr::from_ptr(self.inner.name).to_str().unwrap() }
+    }
+
+    pub fn duration(&self) -> f32 {
+        self.inner.duration
+    }
+}
+
+impl Debug for Animation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Animation")
+            .field("name", &self.name())
+            .field("duration", &self.duration())
+            .finish()
     }
 }

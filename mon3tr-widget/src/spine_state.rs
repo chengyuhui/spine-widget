@@ -6,9 +6,9 @@ use spine::{AnimationState, AnimationStateData, Atlas, Skeleton, SkeletonData};
 use crate::config::Config;
 
 pub struct SpineState {
-    _atlas: Atlas,
-    _skel_data: SkeletonData,
-    _anim_state_data: AnimationStateData,
+    pub atlas: Atlas,
+    pub skel_data: SkeletonData,
+    pub anim_state_data: AnimationStateData,
 
     pub skel: Skeleton,
     pub anim: AnimationState,
@@ -17,10 +17,10 @@ pub struct SpineState {
 }
 
 impl SpineState {
-    pub fn new(config: &Config) -> Result<Self> {
-        let atlas = Atlas::new(&format!("{}??/char.atlas", config.pack))?;
+    pub fn new(pack: &str) -> Result<Self> {
+        let atlas = Atlas::new(&format!("{}??/char.atlas", pack))?;
         let skel_data =
-            SkeletonData::new_binary(&atlas, &format!("{}??/char.skel", config.pack), 1.0)?;
+            SkeletonData::new_binary(&atlas, &format!("{}??/char.skel", pack), 1.0)?;
         let anim_data = AnimationStateData::new(&skel_data, 0.0)?;
 
         let mut skel = Skeleton::new(&skel_data)?;
@@ -28,14 +28,12 @@ impl SpineState {
         skel.set_y(0.0);
 
         let mut anim = AnimationState::new(&anim_data)?;
-        if let Some(ref idle_name) = config.idle_animation {
-            anim.set_animation_by_name(0, idle_name, true);
-        }
+        anim.set_animation_by_name(0, "Idle", true);
 
         Ok(Self {
-            _atlas: atlas,
-            _skel_data: skel_data,
-            _anim_state_data: anim_data,
+            atlas,
+            skel_data,
+            anim_state_data: anim_data,
 
             skel,
             anim,

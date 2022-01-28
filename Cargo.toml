@@ -1,12 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "spine-sys",
-    "spine",
-    "mon3tr-widget"
-]
-
-exclude = ["./trayicon-rs"]
+members = ["spine-sys", "spine", "mon3tr-widget"]
 
 [profile.release]
 debug = true

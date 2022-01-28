@@ -1,4 +1,4 @@
-use crate::{texture::TextureID, vertex::Vertex};
+use crate::{renderer::texture::TextureID, vertex::Vertex};
 
 pub struct ScratchBuffers {
     index: usize,

@@ -33,8 +33,6 @@ pub struct Action {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// Relative path to resource pack.
-    pub pack: String,
     /// List of actions that can be triggered by input
     pub actions: Vec<Action>,
     /// Animation to play on idle
@@ -48,6 +46,9 @@ pub struct Config {
     #[serde(default = "default_bottom_offset")]
     pub bottom_offset: f32,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SavedState {}
 
 fn default_initial_size() -> (f64, f64) {
     (300.0, 400.0)

@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <spine/spine.h>
 
 /*

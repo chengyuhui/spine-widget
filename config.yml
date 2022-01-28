@@ -1,5 +1,4 @@
 ---
-pack: data/enemy_1184_cadkgt_3.zip
 actions:
   - trigger: Space
     sequence:
@@ -17,10 +16,10 @@ actions:
     return_to_idle: false
 idle_animation: Idle
 window_size:
-  - 284.0
-  - 256.8
+  - 269.6
+  - 363.2
 window_position:
-  - 924.0
-  - 763.0
+  - 2119.0
+  - 845.0
 scale: 0.39999992
 bottom_offset: 10.0

@@ -16,12 +16,13 @@ use spine_sys::{
     spSkeleton_updateWorldTransform, spSlot, spSlotData,
 };
 
-use crate::{AnimationState, Atlas, Attachment};
+use crate::{AnimationState, Atlas, Attachment, anim::Animation};
 
 #[derive(Debug)]
 pub(crate) struct SkelDataPtr(pub(crate) *mut spSkeletonData);
 impl Drop for SkelDataPtr {
     fn drop(&mut self) {
+        log::info!("SkeletonData@{:x} dropped", self.0 as usize);
         unsafe { spSkeletonData_dispose(self.0) };
     }
 }
@@ -73,6 +74,14 @@ impl SkeletonData {
             let slots = (*self.ptr.0).slots as *mut &SlotData;
             let len = (*self.ptr.0).slotsCount as usize;
             slice::from_raw_parts(slots, len)
+        }
+    }
+
+    pub fn animations(&self) -> &[&Animation] {
+        unsafe {
+            let animations = (*self.ptr.0).animations as *mut &Animation;
+            let len = (*self.ptr.0).animationsCount as usize;
+            slice::from_raw_parts(animations, len)
         }
     }
 }

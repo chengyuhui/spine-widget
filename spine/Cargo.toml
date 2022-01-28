@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 spine-sys = { path = "../spine-sys" }
 anyhow = "1.0"
+log = "0.4"

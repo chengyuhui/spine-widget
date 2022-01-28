@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use anyhow::Result;
 
@@ -15,4 +15,12 @@ pub fn load_file_packed(path: &str) -> Result<Vec<u8>> {
     }
     
     Ok(buf)
+}
+
+pub fn exe_dir_path() -> PathBuf {
+    std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }

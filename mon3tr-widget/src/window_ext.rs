@@ -19,7 +19,7 @@ impl SpineWidgetWindowExt for Window {
             let hwnd: HWND = std::mem::transmute(self.hwnd());
             let window_styles: WINDOW_EX_STYLE = match GetWindowLongPtrW(hwnd, GWL_EXSTYLE) {
                 0 => panic!("GetWindowLongPtrW failed"),
-                n => WINDOW_EX_STYLE(n.try_into().unwrap()),
+                n => n.try_into().unwrap(),
             };
 
             let window_styles = if passthrough {
@@ -28,7 +28,7 @@ impl SpineWidgetWindowExt for Window {
                 window_styles & !WS_EX_TRANSPARENT | WS_EX_LAYERED //| WS_EX_TOOLWINDOW
             };
 
-            if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, window_styles.0.try_into().unwrap()) == 0 {
+            if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, window_styles.try_into().unwrap()) == 0 {
                 panic!("SetWindowLongPtrW failed");
             }
         }
